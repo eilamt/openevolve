@@ -49,9 +49,238 @@ def create_random_graph(num_vertices: int, edge_probability: float, seed: int = 
     return g
 
 
+def create_crown_graph(n: int, adversarial_ordering: bool = True):
+    """
+    Create a Crown Graph with 2n vertices.
+
+    Crown graph is a classic adversarial example for greedy coloring algorithms.
+    It's bipartite (chromatic number = 2), but greedy/DSatur algorithms
+    processing vertices in certain orders can use up to n colors.
+
+    Structure:
+    - Two sets of n vertices: top and bottom
+    - Each top vertex connects to ALL bottom vertices EXCEPT its "partner"
+    - This creates a bipartite graph where each vertex has degree n-1
+
+    With adversarial_ordering=True, vertices are relabeled so that processing
+    them in order 0,1,2,... interleaves top and bottom, causing greedy
+    algorithms to use many colors.
+
+    Args:
+        n: Half the number of vertices (total vertices = 2n)
+        adversarial_ordering: If True, relabel vertices to be adversarial
+
+    Returns:
+        Graph with 2n vertices, chromatic number = 2
+    """
+    from initial_program import Graph
+
+    g = Graph(2 * n)
+
+    if adversarial_ordering:
+        # Interleave: vertex 0=top0, 1=bottom0, 2=top1, 3=bottom1, ...
+        # So even vertices are "top", odd vertices are "bottom"
+        # top_i is at position 2*i, bottom_i is at position 2*i+1
+        # Connect top_i (2*i) to all bottom_j (2*j+1) where i != j
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    top_vertex = 2 * i      # top_i
+                    bottom_vertex = 2 * j + 1  # bottom_j
+                    g.add_edge(top_vertex, bottom_vertex)
+    else:
+        # Original friendly ordering
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    g.add_edge(i, n + j)
+
+    return g
+
+
+def create_mycielski_graph(k: int):
+    """
+    Create a Mycielskian graph M_k.
+
+    Mycielski's construction creates triangle-free graphs with high chromatic number.
+    - M_2: Single edge (2 vertices, χ=2)
+    - M_3: Cycle C5 (5 vertices, χ=3)
+    - M_4: Grötzsch graph (11 vertices, χ=4)
+    - M_k: χ(M_k) = k, |V| = 3*2^(k-2) - 1
+
+    These graphs are challenging because they have no triangles (local structure
+    suggests 2 colors might suffice) but require k colors globally.
+
+    Args:
+        k: The Mycielski index (k >= 2)
+
+    Returns:
+        Graph with chromatic number k
+    """
+    from initial_program import Graph
+
+    if k < 2:
+        raise ValueError("k must be >= 2")
+
+    if k == 2:
+        # M_2 is a single edge
+        g = Graph(2)
+        g.add_edge(0, 1)
+        return g
+
+    # Start with M_2 and iteratively build up
+    # Current graph vertices and edges
+    vertices = [0, 1]
+    edges = [(0, 1)]
+
+    for _ in range(k - 2):
+        n = len(vertices)
+        # Add n new vertices (u_1, ..., u_n) and one new vertex w
+        new_vertices = list(range(n, 2 * n))
+        w = 2 * n
+
+        new_edges = []
+        # For each original vertex v_i, connect u_i to all neighbors of v_i
+        for i, v in enumerate(vertices):
+            u = new_vertices[i]
+            for (a, b) in edges:
+                if a == v:
+                    new_edges.append((u, b))
+                elif b == v:
+                    new_edges.append((u, a))
+            # Also connect u_i to w
+            new_edges.append((u, w))
+
+        vertices = list(range(w + 1))
+        edges = edges + new_edges
+
+    g = Graph(len(vertices))
+    for (a, b) in edges:
+        g.add_edge(a, b)
+    return g
+
+
+def create_dsatur_adversarial_graph(seed: int):
+    """
+    Create a random graph where DSatur is known to perform suboptimally.
+
+    These graphs are found empirically - certain random seeds produce graphs
+    where simple greedy outperforms DSatur, suggesting room for hybrid
+    approaches or smarter algorithms.
+
+    Args:
+        seed: Random seed (19 and 70 are known adversarial cases)
+
+    Returns:
+        Graph where DSatur may use more colors than necessary
+    """
+    import random
+    from initial_program import Graph
+
+    random.seed(seed)
+    n = 15
+    p = 0.5
+    g = Graph(n)
+    for i in range(n):
+        for j in range(i + 1, n):
+            if random.random() < p:
+                g.add_edge(i, j)
+    return g
+
+
+def compute_chromatic_number(graph, max_colors: int = None) -> int:
+    """
+    Compute the exact chromatic number using backtracking.
+
+    This is exponential time but works for small graphs (< 20 vertices).
+    Uses branch and bound with greedy upper bound.
+
+    Args:
+        graph: Graph to color
+        max_colors: Upper bound to try (default: use greedy result)
+
+    Returns:
+        The exact chromatic number
+    """
+    n = graph.num_vertices
+
+    if max_colors is None:
+        # Get greedy upper bound
+        from initial_program import graph_coloring, count_colors
+        max_colors = count_colors(graph_coloring(graph))
+
+    def is_safe(vertex, color, coloring):
+        for neighbor in graph.get_neighbors(vertex):
+            if coloring.get(neighbor) == color:
+                return False
+        return True
+
+    def can_color_with_k(k):
+        """Check if graph can be colored with k colors using backtracking."""
+        coloring = {}
+
+        def backtrack(vertex):
+            if vertex == n:
+                return True
+            for color in range(k):
+                if is_safe(vertex, color, coloring):
+                    coloring[vertex] = color
+                    if backtrack(vertex + 1):
+                        return True
+                    del coloring[vertex]
+            return False
+
+        return backtrack(0)
+
+    # Binary search for minimum k
+    lo, hi = 1, max_colors
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if can_color_with_k(mid):
+            hi = mid
+        else:
+            lo = mid + 1
+
+    return lo
+
+
+def create_chvatal_graph():
+    """
+    Create the Chvátal graph.
+
+    The Chvátal graph is a 4-chromatic graph with 12 vertices that is
+    triangle-free and 4-regular. It's a good test case because its
+    structure doesn't give obvious clues about the chromatic number.
+
+    Returns:
+        Graph with 12 vertices, chromatic number = 4
+    """
+    from initial_program import Graph
+
+    g = Graph(12)
+    edges = [
+        (0, 1), (0, 4), (0, 6), (0, 9),
+        (1, 2), (1, 5), (1, 7),
+        (2, 3), (2, 6), (2, 8),
+        (3, 4), (3, 7), (3, 9),
+        (4, 5), (4, 8),
+        (5, 10), (5, 11),
+        (6, 10), (6, 11),
+        (7, 8), (7, 11),
+        (8, 10),
+        (9, 10), (9, 11)
+    ]
+    for (a, b) in edges:
+        g.add_edge(a, b)
+    return g
+
+
 def create_test_graphs():
     """
     Create a suite of test graphs for evaluation.
+
+    Includes adversarial graphs designed to expose weaknesses in
+    greedy algorithms like DSatur.
 
     Returns:
         list: List of (name, graph, known_chromatic_number_or_bound) tuples
@@ -59,6 +288,10 @@ def create_test_graphs():
     from initial_program import Graph
 
     test_graphs = []
+
+    # ============================================================
+    # Standard test graphs (DSatur should do well on these)
+    # ============================================================
 
     # 1. Petersen Graph - chromatic number = 3
     petersen = Graph(10)
@@ -77,27 +310,56 @@ def create_test_graphs():
             k5.add_edge(i, j)
     test_graphs.append(("K5", k5, 5))
 
-    # 3. Bipartite graph - chromatic number = 2
-    bipartite = Graph(10)
-    for i in range(5):
-        for j in range(5, 10):
-            if random.random() < 0.5:
-                bipartite.add_edge(i, j)
-    test_graphs.append(("Bipartite", bipartite, 2))
-
-    # 4. Cycle graph C7 - chromatic number = 3 (odd cycle)
+    # 3. Cycle graph C7 - chromatic number = 3 (odd cycle)
     cycle = Graph(7)
     for i in range(7):
         cycle.add_edge(i, (i + 1) % 7)
     test_graphs.append(("Cycle7", cycle, 3))
 
-    # 5. Random sparse graph
-    sparse = create_random_graph(30, 0.1, seed=42)
-    test_graphs.append(("RandomSparse30", sparse, None))
+    # ============================================================
+    # Adversarial graphs (DSatur often fails on these)
+    # ============================================================
 
-    # 6. Random dense graph
-    dense = create_random_graph(20, 0.5, seed=42)
-    test_graphs.append(("RandomDense20", dense, None))
+    # 4. Crown Graph (n=8) - 16 vertices, χ=2, DSatur may use up to 8 colors!
+    # This is a classic adversarial example for greedy coloring
+    crown8 = create_crown_graph(8)
+    test_graphs.append(("Crown8", crown8, 2))
+
+    # 5. Crown Graph (n=10) - 20 vertices, χ=2, DSatur may use up to 10 colors
+    crown10 = create_crown_graph(10)
+    test_graphs.append(("Crown10", crown10, 2))
+
+    # 6. Mycielski M_4 (Grötzsch graph) - 11 vertices, χ=4, triangle-free
+    # Triangle-free structure may mislead algorithms that use local clique detection
+    mycielski4 = create_mycielski_graph(4)
+    test_graphs.append(("Mycielski4", mycielski4, 4))
+
+    # 7. Chvátal Graph - 12 vertices, χ=4, 4-regular, triangle-free
+    chvatal = create_chvatal_graph()
+    test_graphs.append(("Chvatal", chvatal, 4))
+
+    # ============================================================
+    # DSatur-adversarial graphs (where DSatur uses more colors than optimal)
+    # ============================================================
+
+    # 8. Random graph seed=19 - DSatur uses 6, optimal is 5
+    adversarial19 = create_dsatur_adversarial_graph(19)
+    chromatic19 = compute_chromatic_number(adversarial19)
+    test_graphs.append(("DSaturAdversarial19", adversarial19, chromatic19))
+
+    # 9. Random graph seed=70 - DSatur uses 6, optimal is 5
+    adversarial70 = create_dsatur_adversarial_graph(70)
+    chromatic70 = compute_chromatic_number(adversarial70)
+    test_graphs.append(("DSaturAdversarial70", adversarial70, chromatic70))
+
+    # ============================================================
+    # Scale test graphs
+    # ============================================================
+
+    # 10. Crown Graph (n=15) - 30 vertices, χ=2
+    # Larger crown to really stress-test algorithms
+    crown15 = create_crown_graph(15)
+    test_graphs.append(("Crown15", crown15, 2))
 
     return test_graphs
 
@@ -410,7 +672,7 @@ if __name__ == "__main__":
     print(f"  All Valid: {stage2_result.get('stage2_all_valid', False)}")
 
     print("\n" + "=" * 50)
-    print("Stage 3: Full Evaluation (6 graphs)")
+    print("Stage 3: Full Evaluation (10 graphs)")
     print("=" * 50)
     stage3_result = evaluate_stage3("initial_program.py")
     print(f"  Combined Score: {stage3_result.get('combined_score', 0):.4f}")

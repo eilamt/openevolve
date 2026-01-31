@@ -343,7 +343,7 @@ class TestEvaluator(unittest.TestCase):
         """Test that evaluate() returns per-graph details."""
         result = evaluate(self.program_path)
         self.assertIn('details', result)
-        self.assertEqual(len(result['details']), 6)  # 6 test graphs
+        self.assertEqual(len(result['details']), 10)  # 10 test graphs (including adversarial)
 
     def test_evaluate_score_in_valid_range(self):
         """Test that combined_score is between 0 and 1."""

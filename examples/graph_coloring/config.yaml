@@ -1,18 +1,18 @@
 # Configuration for Graph Coloring example
 max_iterations: 50
-checkpoint_interval: 10
+checkpoint_interval: 5
 
-# LLM configuration
+# LLM configuration (using Anthropic Claude API)
 llm:
-  primary_model: "gemini-2.5-flash"
+  primary_model: "claude-sonnet-4-5-20250929"
   primary_model_weight: 0.8
-  secondary_model: "gemini-2.5-flash-lite"
+  secondary_model: "claude-sonnet-4-5-20250929"
   secondary_model_weight: 0.2
-  api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
-  api_key: "${GEMINI_API_KEY}"
+  api_base: "https://api.anthropic.com/v1"
+  api_key: "${ANTHROPIC_API_KEY}"
   temperature: 0.7
-  max_tokens: 16000
-  timeout: 120
+  max_tokens: 8192
+  timeout: 300
 
 # Prompt configuration
 prompt:
