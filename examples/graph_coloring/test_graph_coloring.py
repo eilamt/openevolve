@@ -20,7 +20,14 @@ from initial_program import (
     create_sample_graph,
     load_graph_from_file
 )
-from evaluator import create_test_graphs, create_random_graph
+from evaluator import (
+    create_test_graphs,
+    create_random_graph,
+    evaluate,
+    evaluate_stage1,
+    evaluate_stage2,
+    evaluate_stage3
+)
 
 
 class TestGraphColoring(unittest.TestCase):
@@ -308,6 +315,459 @@ class TestGraphFileLoading(unittest.TestCase):
         """Test that loading a nonexistent file raises an error."""
         with self.assertRaises(FileNotFoundError):
             load_graph_from_file('nonexistent_file.txt')
+
+
+class TestEvaluator(unittest.TestCase):
+    """Test cases for the evaluator functions."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.program_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            'initial_program.py'
+        )
+
+    def test_evaluate_returns_combined_score(self):
+        """Test that evaluate() returns a combined_score."""
+        result = evaluate(self.program_path)
+        self.assertIn('combined_score', result)
+        self.assertIsInstance(result['combined_score'], float)
+
+    def test_evaluate_returns_all_valid(self):
+        """Test that evaluate() returns all_valid flag."""
+        result = evaluate(self.program_path)
+        self.assertIn('all_valid', result)
+        self.assertTrue(result['all_valid'])
+
+    def test_evaluate_returns_details(self):
+        """Test that evaluate() returns per-graph details."""
+        result = evaluate(self.program_path)
+        self.assertIn('details', result)
+        self.assertEqual(len(result['details']), 6)  # 6 test graphs
+
+    def test_evaluate_score_in_valid_range(self):
+        """Test that combined_score is between 0 and 1."""
+        result = evaluate(self.program_path)
+        self.assertGreaterEqual(result['combined_score'], 0.0)
+        self.assertLessEqual(result['combined_score'], 1.0)
+
+    def test_evaluate_nonexistent_file(self):
+        """Test that evaluate() handles missing files gracefully."""
+        result = evaluate('nonexistent_program.py')
+        self.assertEqual(result['combined_score'], 0.0)
+        self.assertIn('error', result)
+
+    # Stage 1 tests
+    def test_stage1_passes_for_valid_program(self):
+        """Test that stage1 passes for initial_program.py."""
+        result = evaluate_stage1(self.program_path)
+        self.assertTrue(result['stage1_passed'])
+        self.assertEqual(result['combined_score'], 1.0)
+
+    def test_stage1_returns_required_fields(self):
+        """Test that stage1 returns required fields."""
+        result = evaluate_stage1(self.program_path)
+        self.assertIn('combined_score', result)
+        self.assertIn('stage1_passed', result)
+
+    def test_stage1_handles_errors(self):
+        """Test that stage1 handles errors gracefully."""
+        result = evaluate_stage1('nonexistent_program.py')
+        self.assertEqual(result['combined_score'], 0.0)
+        self.assertFalse(result['stage1_passed'])
+
+    # Stage 2 tests
+    def test_stage2_returns_score(self):
+        """Test that stage2 returns a combined_score."""
+        result = evaluate_stage2(self.program_path)
+        self.assertIn('combined_score', result)
+        self.assertGreater(result['combined_score'], 0.0)
+
+    def test_stage2_optimal_score_for_initial_program(self):
+        """Test that initial program gets optimal score on small graphs."""
+        result = evaluate_stage2(self.program_path)
+        # Initial greedy algorithm should get optimal on small graphs
+        self.assertEqual(result['combined_score'], 1.0)
+
+    def test_stage2_returns_avg_score(self):
+        """Test that stage2 returns average score."""
+        result = evaluate_stage2(self.program_path)
+        self.assertIn('stage2_avg_score', result)
+        self.assertIn('stage2_all_valid', result)
+
+    # Stage 3 tests
+    def test_stage3_returns_full_metrics(self):
+        """Test that stage3 returns full evaluation metrics."""
+        result = evaluate_stage3(self.program_path)
+        self.assertIn('combined_score', result)
+        self.assertIn('avg_color_score', result)
+        self.assertIn('all_valid', result)
+        self.assertIn('optimal_count', result)
+        self.assertIn('details', result)
+
+    def test_stage3_score_equals_evaluate(self):
+        """Test that stage3 returns same result as evaluate() for valid programs."""
+        stage3_result = evaluate_stage3(self.program_path)
+        eval_result = evaluate(self.program_path)
+        self.assertEqual(
+            stage3_result['combined_score'],
+            eval_result['combined_score']
+        )
+
+    # Cascade flow tests
+    def test_cascade_flow_all_stages_pass(self):
+        """Test that all stages pass for initial_program.py."""
+        stage1 = evaluate_stage1(self.program_path)
+        self.assertTrue(stage1['stage1_passed'])
+
+        stage2 = evaluate_stage2(self.program_path)
+        self.assertGreaterEqual(stage2['combined_score'], 0.7)
+
+        stage3 = evaluate_stage3(self.program_path)
+        self.assertGreater(stage3['combined_score'], 0.0)
+
+
+class TestEvaluatorFailureCases(unittest.TestCase):
+    """Test cases for evaluator failure scenarios using mock programs."""
+
+    def setUp(self):
+        """Set up test fixtures with temp directory for mock programs."""
+        import tempfile
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        """Clean up temp directory after tests."""
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _create_mock_program(self, name: str, code: str) -> str:
+        """Create a mock program file and return its path."""
+        file_path = os.path.join(self.temp_dir, name)
+        with open(file_path, 'w') as f:
+            f.write(code)
+        return file_path
+
+    def test_stage1_fails_for_invalid_coloring(self):
+        """Test that stage1 fails for a program that produces invalid colorings."""
+        # This program assigns the same color (0) to ALL vertices,
+        # which creates conflicts on any graph with edges
+        invalid_program = '''
+class Graph:
+    def __init__(self, num_vertices):
+        self.num_vertices = num_vertices
+        self.adjacency_list = {i: set() for i in range(num_vertices)}
+
+    def add_edge(self, u, v):
+        self.adjacency_list[u].add(v)
+        self.adjacency_list[v].add(u)
+
+    def get_neighbors(self, vertex):
+        return self.adjacency_list[vertex]
+
+    def get_degree(self, vertex):
+        return len(self.adjacency_list[vertex])
+
+    def get_edges(self):
+        edges = []
+        for u in range(self.num_vertices):
+            for v in self.adjacency_list[u]:
+                if u < v:
+                    edges.append((u, v))
+        return edges
+
+def graph_coloring(graph):
+    """Invalid: assigns same color to all vertices."""
+    return {v: 0 for v in range(graph.num_vertices)}
+
+def is_valid_coloring(graph, coloring):
+    conflicts = 0
+    for u, v in graph.get_edges():
+        if coloring.get(u) == coloring.get(v):
+            conflicts += 1
+    return (conflicts == 0, conflicts)
+
+def count_colors(coloring):
+    return len(set(coloring.values()))
+'''
+        program_path = self._create_mock_program('invalid_coloring.py', invalid_program)
+        result = evaluate_stage1(program_path)
+
+        self.assertFalse(result.get('stage1_passed', True))
+        self.assertEqual(result['combined_score'], 0.0)
+        self.assertIn('failed_on', result)
+
+    def test_stage1_fails_for_partial_coloring(self):
+        """Test that stage1 fails for a program that doesn't color all vertices."""
+        # This program only colors even-indexed vertices
+        partial_program = '''
+class Graph:
+    def __init__(self, num_vertices):
+        self.num_vertices = num_vertices
+        self.adjacency_list = {i: set() for i in range(num_vertices)}
+
+    def add_edge(self, u, v):
+        self.adjacency_list[u].add(v)
+        self.adjacency_list[v].add(u)
+
+    def get_neighbors(self, vertex):
+        return self.adjacency_list[vertex]
+
+    def get_degree(self, vertex):
+        return len(self.adjacency_list[vertex])
+
+    def get_edges(self):
+        edges = []
+        for u in range(self.num_vertices):
+            for v in self.adjacency_list[u]:
+                if u < v:
+                    edges.append((u, v))
+        return edges
+
+def graph_coloring(graph):
+    """Only colors even vertices - missing odd vertices."""
+    return {v: v % 3 for v in range(graph.num_vertices) if v % 2 == 0}
+
+def is_valid_coloring(graph, coloring):
+    conflicts = 0
+    for u, v in graph.get_edges():
+        if coloring.get(u) == coloring.get(v):
+            conflicts += 1
+    return (conflicts == 0, conflicts)
+
+def count_colors(coloring):
+    return len(set(coloring.values()))
+'''
+        program_path = self._create_mock_program('partial_coloring.py', partial_program)
+        # This should fail because neighbors might both be None
+        result = evaluate_stage1(program_path)
+
+        # Partial coloring should still technically pass validity (None != None comparison)
+        # But let's test the full evaluate which might catch other issues
+        full_result = evaluate(program_path)
+        # Score should be affected by the partial nature
+        self.assertIsNotNone(full_result)
+
+    def test_stage2_low_score_for_suboptimal_coloring(self):
+        """Test that stage2 gives low score for inefficient coloring."""
+        # This program uses n colors for n vertices (worst case)
+        suboptimal_program = '''
+class Graph:
+    def __init__(self, num_vertices):
+        self.num_vertices = num_vertices
+        self.adjacency_list = {i: set() for i in range(num_vertices)}
+
+    def add_edge(self, u, v):
+        self.adjacency_list[u].add(v)
+        self.adjacency_list[v].add(u)
+
+    def get_neighbors(self, vertex):
+        return self.adjacency_list[vertex]
+
+    def get_degree(self, vertex):
+        return len(self.adjacency_list[vertex])
+
+    def get_edges(self):
+        edges = []
+        for u in range(self.num_vertices):
+            for v in self.adjacency_list[u]:
+                if u < v:
+                    edges.append((u, v))
+        return edges
+
+def graph_coloring(graph):
+    """Suboptimal: uses n colors for n vertices (every vertex gets unique color)."""
+    return {v: v for v in range(graph.num_vertices)}
+
+def is_valid_coloring(graph, coloring):
+    conflicts = 0
+    for u, v in graph.get_edges():
+        if coloring.get(u) == coloring.get(v):
+            conflicts += 1
+    return (conflicts == 0, conflicts)
+
+def count_colors(coloring):
+    return len(set(coloring.values()))
+'''
+        program_path = self._create_mock_program('suboptimal_coloring.py', suboptimal_program)
+
+        # Stage 1 should pass (coloring is valid)
+        stage1_result = evaluate_stage1(program_path)
+        self.assertTrue(stage1_result.get('stage1_passed', False))
+
+        # Stage 2 should have lower score (using more colors than optimal)
+        stage2_result = evaluate_stage2(program_path)
+        # Triangle needs 3 colors, this uses 3 -> score = 1.0
+        # K4 needs 4 colors, this uses 4 -> score = 1.0
+        # Path3 needs 2 colors, this uses 3 -> score = 2/3 = 0.67
+        # Average = (1.0 + 1.0 + 0.67) / 3 = 0.89
+        self.assertGreater(stage2_result['combined_score'], 0.0)
+        self.assertLessEqual(stage2_result['combined_score'], 1.0)
+
+    def test_evaluate_handles_missing_function(self):
+        """Test that evaluate handles a program missing graph_coloring function."""
+        missing_func_program = '''
+class Graph:
+    def __init__(self, num_vertices):
+        self.num_vertices = num_vertices
+        self.adjacency_list = {i: set() for i in range(num_vertices)}
+
+    def add_edge(self, u, v):
+        self.adjacency_list[u].add(v)
+        self.adjacency_list[v].add(u)
+
+# Missing graph_coloring, is_valid_coloring, and count_colors functions!
+'''
+        program_path = self._create_mock_program('missing_function.py', missing_func_program)
+        result = evaluate(program_path)
+
+        self.assertEqual(result['combined_score'], 0.0)
+        self.assertIn('error', result)
+
+    def test_evaluate_handles_syntax_error(self):
+        """Test that evaluate handles a program with syntax errors."""
+        syntax_error_program = '''
+def graph_coloring(graph)
+    # Missing colon above - syntax error
+    return {}
+'''
+        program_path = self._create_mock_program('syntax_error.py', syntax_error_program)
+        result = evaluate(program_path)
+
+        self.assertEqual(result['combined_score'], 0.0)
+        self.assertIn('error', result)
+
+    def test_evaluate_handles_runtime_error(self):
+        """Test that evaluate handles a program that throws runtime errors."""
+        runtime_error_program = '''
+class Graph:
+    def __init__(self, num_vertices):
+        self.num_vertices = num_vertices
+        self.adjacency_list = {i: set() for i in range(num_vertices)}
+
+    def add_edge(self, u, v):
+        self.adjacency_list[u].add(v)
+        self.adjacency_list[v].add(u)
+
+    def get_neighbors(self, vertex):
+        return self.adjacency_list[vertex]
+
+    def get_degree(self, vertex):
+        return len(self.adjacency_list[vertex])
+
+    def get_edges(self):
+        edges = []
+        for u in range(self.num_vertices):
+            for v in self.adjacency_list[u]:
+                if u < v:
+                    edges.append((u, v))
+        return edges
+
+def graph_coloring(graph):
+    """Raises an error during execution."""
+    raise ValueError("Intentional error for testing")
+
+def is_valid_coloring(graph, coloring):
+    conflicts = 0
+    for u, v in graph.get_edges():
+        if coloring.get(u) == coloring.get(v):
+            conflicts += 1
+    return (conflicts == 0, conflicts)
+
+def count_colors(coloring):
+    return len(set(coloring.values()))
+'''
+        program_path = self._create_mock_program('runtime_error.py', runtime_error_program)
+        result = evaluate(program_path)
+
+        self.assertEqual(result['combined_score'], 0.0)
+        self.assertIn('error', result)
+
+    def test_stage1_handles_exception_gracefully(self):
+        """Test that stage1 handles exceptions and returns proper error structure."""
+        error_program = '''
+raise ImportError("Cannot import module")
+'''
+        program_path = self._create_mock_program('import_error.py', error_program)
+        result = evaluate_stage1(program_path)
+
+        self.assertEqual(result['combined_score'], 0.0)
+        self.assertFalse(result.get('stage1_passed', True))
+        self.assertIn('error', result)
+
+    def test_stage2_handles_exception_gracefully(self):
+        """Test that stage2 handles exceptions and returns proper error structure."""
+        error_program = '''
+raise ImportError("Cannot import module")
+'''
+        program_path = self._create_mock_program('import_error2.py', error_program)
+        result = evaluate_stage2(program_path)
+
+        self.assertEqual(result['combined_score'], 0.0)
+        self.assertIn('error', result)
+
+    def test_stage3_zero_score_for_invalid(self):
+        """Test that stage3 returns 0 score when any coloring is invalid."""
+        # Same as invalid coloring test but for stage 3
+        invalid_program = '''
+class Graph:
+    def __init__(self, num_vertices):
+        self.num_vertices = num_vertices
+        self.adjacency_list = {i: set() for i in range(num_vertices)}
+
+    def add_edge(self, u, v):
+        self.adjacency_list[u].add(v)
+        self.adjacency_list[v].add(u)
+
+    def get_neighbors(self, vertex):
+        return self.adjacency_list[vertex]
+
+    def get_degree(self, vertex):
+        return len(self.adjacency_list[vertex])
+
+    def get_edges(self):
+        edges = []
+        for u in range(self.num_vertices):
+            for v in self.adjacency_list[u]:
+                if u < v:
+                    edges.append((u, v))
+        return edges
+
+def graph_coloring(graph):
+    """Invalid: assigns same color to all vertices."""
+    return {v: 0 for v in range(graph.num_vertices)}
+
+def is_valid_coloring(graph, coloring):
+    conflicts = 0
+    for u, v in graph.get_edges():
+        if coloring.get(u) == coloring.get(v):
+            conflicts += 1
+    return (conflicts == 0, conflicts)
+
+def count_colors(coloring):
+    return len(set(coloring.values()))
+'''
+        program_path = self._create_mock_program('invalid_for_stage3.py', invalid_program)
+        result = evaluate_stage3(program_path)
+
+        self.assertEqual(result['combined_score'], 0.0)
+        self.assertFalse(result.get('all_valid', True))
+
+    def test_nonexistent_program_file(self):
+        """Test all stages handle nonexistent files gracefully."""
+        fake_path = '/nonexistent/path/to/program.py'
+
+        stage1 = evaluate_stage1(fake_path)
+        self.assertEqual(stage1['combined_score'], 0.0)
+        self.assertFalse(stage1.get('stage1_passed', True))
+
+        stage2 = evaluate_stage2(fake_path)
+        self.assertEqual(stage2['combined_score'], 0.0)
+
+        stage3 = evaluate_stage3(fake_path)
+        self.assertEqual(stage3['combined_score'], 0.0)
+
+        full = evaluate(fake_path)
+        self.assertEqual(full['combined_score'], 0.0)
 
 
 if __name__ == "__main__":

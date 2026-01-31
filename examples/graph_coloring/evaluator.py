@@ -176,15 +176,16 @@ def evaluate(program_path: str) -> dict:
 
         # Calculate final metrics
         avg_score = total_score / num_tests
-        validity_score = 1.0 if all_valid else 0.5
 
-        # Combined score: weighted average
-        combined_score = (avg_score * 0.7) + (validity_score * 0.3)
+        # Combined score: 0 if any invalid, otherwise based on color efficiency
+        if not all_valid:
+            combined_score = 0.0
+        else:
+            combined_score = avg_score
 
         return {
             'combined_score': combined_score,
             'avg_color_score': avg_score,
-            'validity_score': validity_score,
             'all_valid': all_valid,
             'optimal_count': optimal_count,
             'total_colors': total_colors,
@@ -200,20 +201,225 @@ def evaluate(program_path: str) -> dict:
         }
 
 
-if __name__ == "__main__":
-    # Test the evaluator with the initial program
-    result = evaluate("initial_program.py")
-    print("Evaluation Results:")
-    print(f"  Combined Score: {result.get('combined_score', 0):.4f}")
-    print(f"  Avg Color Score: {result.get('avg_color_score', 0):.4f}")
-    print(f"  All Valid: {result.get('all_valid', False)}")
-    print(f"  Optimal Count: {result.get('optimal_count', 0)}/{result.get('num_tests', 0)}")
+# ============================================================
+# Cascade Evaluation Stages
+# ============================================================
 
-    if 'details' in result:
+def evaluate_stage1(program_path: str) -> dict:
+    """
+    Stage 1: Validity Gate - Quick validation check only.
+
+    Tests the algorithm on 3 simple graphs and ONLY checks if colorings
+    are valid. No scoring is done. This is the fastest possible rejection
+    of broken algorithms.
+
+    Args:
+        program_path: Path to the evolved program file
+
+    Returns:
+        dict: combined_score is 1.0 if all valid, 0.0 if any invalid
+    """
+    try:
+        # Load the evolved module
+        module = load_program(program_path)
+
+        # Get the coloring function and helper functions
+        graph_coloring = module.graph_coloring
+        is_valid_coloring = module.is_valid_coloring
+        Graph = module.Graph
+
+        # Quick test graphs - small and fast to validate
+        quick_tests = []
+
+        # 1. Triangle (K3) - simplest non-trivial graph
+        triangle = Graph(3)
+        triangle.add_edge(0, 1)
+        triangle.add_edge(1, 2)
+        triangle.add_edge(0, 2)
+        quick_tests.append(("Triangle", triangle))
+
+        # 2. Complete graph K4
+        k4 = Graph(4)
+        for i in range(4):
+            for j in range(i + 1, 4):
+                k4.add_edge(i, j)
+        quick_tests.append(("K4", k4))
+
+        # 3. Simple path (3 vertices)
+        path = Graph(3)
+        path.add_edge(0, 1)
+        path.add_edge(1, 2)
+        quick_tests.append(("Path3", path))
+
+        # Run validity check only - no scoring
+        for name, graph in quick_tests:
+            coloring = graph_coloring(graph)
+            is_valid, conflicts = is_valid_coloring(graph, coloring)
+
+            if not is_valid:
+                # Fail fast: any invalid coloring = immediate rejection
+                return {
+                    'combined_score': 0.0,
+                    'stage1_passed': False,
+                    'failed_on': name,
+                    'conflicts': conflicts
+                }
+
+        # All graphs produced valid colorings
+        return {
+            'combined_score': 1.0,
+            'stage1_passed': True
+        }
+
+    except Exception as e:
+        return {
+            'combined_score': 0.0,
+            'stage1_passed': False,
+            'error': str(e)
+        }
+
+
+def evaluate_stage2(program_path: str) -> dict:
+    """
+    Stage 2: Quick scoring on small graphs.
+
+    Only runs if stage 1 passed. Computes quality scores on 3 small graphs
+    to filter out algorithms that produce valid but inefficient colorings.
+
+    Args:
+        program_path: Path to the evolved program file
+
+    Returns:
+        dict: Quick scoring metrics
+    """
+    try:
+        # Load the evolved module
+        module = load_program(program_path)
+
+        # Get the coloring function and helper functions
+        graph_coloring = module.graph_coloring
+        is_valid_coloring = module.is_valid_coloring
+        count_colors = module.count_colors
+        Graph = module.Graph
+
+        # Same test graphs as stage 1, but now with expected chromatic numbers
+        quick_tests = []
+
+        # 1. Triangle (K3) - chromatic number = 3
+        triangle = Graph(3)
+        triangle.add_edge(0, 1)
+        triangle.add_edge(1, 2)
+        triangle.add_edge(0, 2)
+        quick_tests.append(("Triangle", triangle, 3))
+
+        # 2. Complete graph K4 - chromatic number = 4
+        k4 = Graph(4)
+        for i in range(4):
+            for j in range(i + 1, 4):
+                k4.add_edge(i, j)
+        quick_tests.append(("K4", k4, 4))
+
+        # 3. Simple path (3 vertices) - chromatic number = 2
+        path = Graph(3)
+        path.add_edge(0, 1)
+        path.add_edge(1, 2)
+        quick_tests.append(("Path3", path, 2))
+
+        # Compute scores
+        total_score = 0
+        all_valid = True
+
+        for name, graph, expected_chromatic in quick_tests:
+            coloring = graph_coloring(graph)
+            is_valid, conflicts = is_valid_coloring(graph, coloring)
+            num_colors = count_colors(coloring)
+
+            if not is_valid:
+                all_valid = False
+                graph_score = 0
+            else:
+                graph_score = min(1.0, expected_chromatic / num_colors)
+
+            total_score += graph_score
+
+        avg_score = total_score / len(quick_tests)
+
+        # If any invalid, combined_score = 0
+        if not all_valid:
+            combined_score = 0.0
+        else:
+            combined_score = avg_score
+
+        return {
+            'combined_score': combined_score,
+            'stage2_avg_score': avg_score,
+            'stage2_all_valid': all_valid
+        }
+
+    except Exception as e:
+        return {
+            'combined_score': 0.0,
+            'error': str(e)
+        }
+
+
+def evaluate_stage3(program_path: str) -> dict:
+    """
+    Stage 3: Full evaluation on all test graphs.
+
+    Only runs if stage 2 passed threshold. Comprehensive evaluation
+    on all 6 test graphs with detailed scoring.
+    If any coloring is invalid, combined_score = 0.
+
+    Args:
+        program_path: Path to the evolved program file
+
+    Returns:
+        dict: Full evaluation metrics with combined_score = 0 if any invalid
+    """
+    result = evaluate(program_path)
+
+    # Enforce: any invalid coloring = score of 0
+    if not result.get('all_valid', False):
+        result['combined_score'] = 0.0
+
+    return result
+
+
+if __name__ == "__main__":
+    # Test the 3-stage cascade evaluation with the initial program
+    print("=" * 50)
+    print("Stage 1: Validity Gate (3 small graphs)")
+    print("=" * 50)
+    stage1_result = evaluate_stage1("initial_program.py")
+    print(f"  Passed: {stage1_result.get('stage1_passed', False)}")
+    print(f"  Combined Score: {stage1_result.get('combined_score', 0):.4f}")
+
+    if not stage1_result.get('stage1_passed'):
+        print("\n  FAILED - Skipping remaining stages")
+        if 'failed_on' in stage1_result:
+            print(f"  Failed on: {stage1_result['failed_on']}")
+        exit(1)
+
+    print("\n" + "=" * 50)
+    print("Stage 2: Quick Scoring (3 small graphs)")
+    print("=" * 50)
+    stage2_result = evaluate_stage2("initial_program.py")
+    print(f"  Combined Score: {stage2_result.get('combined_score', 0):.4f}")
+    print(f"  Avg Score: {stage2_result.get('stage2_avg_score', 0):.4f}")
+    print(f"  All Valid: {stage2_result.get('stage2_all_valid', False)}")
+
+    print("\n" + "=" * 50)
+    print("Stage 3: Full Evaluation (6 graphs)")
+    print("=" * 50)
+    stage3_result = evaluate_stage3("initial_program.py")
+    print(f"  Combined Score: {stage3_result.get('combined_score', 0):.4f}")
+    print(f"  Avg Color Score: {stage3_result.get('avg_color_score', 0):.4f}")
+    print(f"  All Valid: {stage3_result.get('all_valid', False)}")
+    print(f"  Optimal Count: {stage3_result.get('optimal_count', 0)}/{stage3_result.get('num_tests', 0)}")
+
+    if 'details' in stage3_result:
         print("\nPer-graph results:")
-        for detail in result['details']:
+        for detail in stage3_result['details']:
             print(f"  {detail['name']}: {detail['colors']} colors, "
                   f"valid={detail['valid']}, score={detail['score']:.3f}")
-
-    if 'error' in result:
-        print(f"  Error: {result['error']}")
