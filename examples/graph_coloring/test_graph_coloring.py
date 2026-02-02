@@ -29,10 +29,17 @@ from evaluator import (
     evaluate_stage3,
     get_time_budget,
     calculate_time_score,
+    load_dimacs_graph,
+    load_chromatic_registry,
+    load_dimacs_test_graphs,
+    BENCHMARKS_DIR,
+    CHROMATIC_NUMBERS_FILE,
     BASE_TIME_BUDGET,
     COEFF_TIME,
     TIME_PENALTY_WEIGHT
 )
+import tempfile
+import json
 
 
 class TestGraphColoring(unittest.TestCase):
@@ -348,7 +355,8 @@ class TestEvaluator(unittest.TestCase):
         """Test that evaluate() returns per-graph details."""
         result = evaluate(self.program_path)
         self.assertIn('details', result)
-        self.assertEqual(len(result['details']), 10)  # 10 test graphs (including adversarial)
+        # Number of test graphs depends on DIMACS benchmarks loaded
+        self.assertGreater(len(result['details']), 0)
 
     def test_evaluate_score_in_valid_range(self):
         """Test that combined_score is between 0 and 1."""
@@ -388,11 +396,12 @@ class TestEvaluator(unittest.TestCase):
         self.assertIn('combined_score', result)
         self.assertGreater(result['combined_score'], 0.0)
 
-    def test_stage2_optimal_score_for_initial_program(self):
-        """Test that initial program gets optimal score on small graphs."""
+    def test_stage2_reasonable_score_for_initial_program(self):
+        """Test that initial program gets reasonable score on small graphs."""
         result = evaluate_stage2(self.program_path)
-        # Initial greedy algorithm should get optimal on small graphs
-        self.assertEqual(result['combined_score'], 1.0)
+        # Initial greedy algorithm should get a reasonable score (> 0.7)
+        # on DIMACS small benchmarks, though not necessarily optimal
+        self.assertGreater(result['combined_score'], 0.7)
 
     def test_stage2_returns_avg_score(self):
         """Test that stage2 returns average score."""
@@ -879,6 +888,199 @@ class TestTimeBudget(unittest.TestCase):
 
         # Simple greedy should be fast enough for good time scores
         self.assertGreaterEqual(result['avg_time_score'], 0.9)
+
+
+class TestDIMACS(unittest.TestCase):
+    """Test cases for DIMACS benchmark loading functionality."""
+
+    def test_load_dimacs_graph_basic(self):
+        """Test loading a simple DIMACS graph from a temp file."""
+        dimacs_content = """c Test graph
+c Comment line
+p edge 4 5
+e 1 2
+e 2 3
+e 3 4
+e 4 1
+e 1 3
+"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.col', delete=False) as f:
+            f.write(dimacs_content)
+            temp_path = f.name
+
+        try:
+            graph = load_dimacs_graph(temp_path)
+            self.assertEqual(graph.num_vertices, 4)
+            self.assertEqual(len(graph.get_edges()), 5)
+            # Check 0-indexed conversion: edge 1-2 should be 0-1
+            self.assertIn(1, graph.get_neighbors(0))
+            self.assertIn(0, graph.get_neighbors(1))
+        finally:
+            os.unlink(temp_path)
+
+    def test_load_dimacs_graph_1indexed_to_0indexed(self):
+        """Test that DIMACS 1-indexed vertices are converted to 0-indexed."""
+        dimacs_content = """p edge 3 2
+e 1 2
+e 2 3
+"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.col', delete=False) as f:
+            f.write(dimacs_content)
+            temp_path = f.name
+
+        try:
+            graph = load_dimacs_graph(temp_path)
+            # Vertex 1 in DIMACS -> vertex 0 in our graph
+            # Vertex 2 in DIMACS -> vertex 1 in our graph
+            # Vertex 3 in DIMACS -> vertex 2 in our graph
+            self.assertIn(1, graph.get_neighbors(0))  # edge 1-2 -> 0-1
+            self.assertIn(2, graph.get_neighbors(1))  # edge 2-3 -> 1-2
+        finally:
+            os.unlink(temp_path)
+
+    def test_load_dimacs_graph_missing_problem_line(self):
+        """Test that missing problem line raises ValueError."""
+        dimacs_content = """c Just comments
+c No problem line
+e 1 2
+"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.col', delete=False) as f:
+            f.write(dimacs_content)
+            temp_path = f.name
+
+        try:
+            with self.assertRaises(ValueError) as context:
+                load_dimacs_graph(temp_path)
+            self.assertIn("no problem line", str(context.exception))
+        finally:
+            os.unlink(temp_path)
+
+    def test_load_dimacs_graph_empty_graph(self):
+        """Test loading a graph with vertices but no edges."""
+        dimacs_content = """p edge 5 0
+"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.col', delete=False) as f:
+            f.write(dimacs_content)
+            temp_path = f.name
+
+        try:
+            graph = load_dimacs_graph(temp_path)
+            self.assertEqual(graph.num_vertices, 5)
+            self.assertEqual(len(graph.get_edges()), 0)
+        finally:
+            os.unlink(temp_path)
+
+    def test_load_chromatic_registry_exists(self):
+        """Test that chromatic registry file exists and loads."""
+        self.assertTrue(os.path.exists(CHROMATIC_NUMBERS_FILE))
+        registry = load_chromatic_registry()
+        self.assertIsInstance(registry, dict)
+        self.assertIn('full', registry)
+        self.assertIn('small', registry)
+
+    def test_load_chromatic_registry_has_entries(self):
+        """Test that registry has expected graph entries."""
+        registry = load_chromatic_registry()
+        full = registry.get('full', {})
+
+        # Check some known graphs exist
+        self.assertIn('myciel3.col', full)
+        self.assertIn('queen5_5.col', full)
+
+        # Check entry structure
+        myciel3 = full['myciel3.col']
+        self.assertIn('chromatic', myciel3)
+        self.assertIn('type', myciel3)
+        self.assertEqual(myciel3['chromatic'], 4)
+
+    def test_load_chromatic_registry_missing_file(self):
+        """Test that missing registry file returns empty dict."""
+        import evaluator
+        original_file = evaluator.CHROMATIC_NUMBERS_FILE
+        try:
+            evaluator.CHROMATIC_NUMBERS_FILE = '/nonexistent/path/chromatic.json'
+            registry = load_chromatic_registry()
+            self.assertEqual(registry, {})
+        finally:
+            evaluator.CHROMATIC_NUMBERS_FILE = original_file
+
+    def test_load_dimacs_test_graphs_full(self):
+        """Test loading full benchmark graphs."""
+        graphs = load_dimacs_test_graphs('full')
+        self.assertGreater(len(graphs), 0)
+
+        # Check structure of returned tuples
+        for name, graph, chromatic in graphs:
+            self.assertIsInstance(name, str)
+            self.assertIsInstance(graph.num_vertices, int)
+            self.assertGreater(graph.num_vertices, 0)
+            # Chromatic can be None or int
+            if chromatic is not None:
+                self.assertIsInstance(chromatic, int)
+                self.assertGreater(chromatic, 0)
+
+    def test_load_dimacs_test_graphs_small(self):
+        """Test loading small benchmark graphs."""
+        graphs = load_dimacs_test_graphs('small')
+        self.assertGreater(len(graphs), 0)
+
+        # All small graphs should have < 100 vertices
+        for name, graph, chromatic in graphs:
+            self.assertLess(graph.num_vertices, 100,
+                            f"Small graph {name} has {graph.num_vertices} vertices")
+
+    def test_load_dimacs_test_graphs_nonexistent_category(self):
+        """Test that nonexistent category returns empty list."""
+        graphs = load_dimacs_test_graphs('nonexistent_category')
+        self.assertEqual(graphs, [])
+
+    def test_load_dimacs_test_graphs_chromatic_lookup(self):
+        """Test that chromatic numbers are correctly looked up from registry."""
+        graphs = load_dimacs_test_graphs('full')
+        registry = load_chromatic_registry()
+        full_registry = registry.get('full', {})
+
+        for name, graph, chromatic in graphs:
+            filename = name + '.col'
+            if filename in full_registry:
+                expected = full_registry[filename].get('chromatic')
+                self.assertEqual(chromatic, expected,
+                                 f"Chromatic mismatch for {name}: got {chromatic}, expected {expected}")
+
+    def test_benchmarks_directory_exists(self):
+        """Test that benchmarks directory exists."""
+        self.assertTrue(os.path.exists(BENCHMARKS_DIR))
+        self.assertTrue(os.path.isdir(BENCHMARKS_DIR))
+
+    def test_benchmarks_subdirectories_exist(self):
+        """Test that small and full subdirectories exist."""
+        small_dir = os.path.join(BENCHMARKS_DIR, 'small')
+        full_dir = os.path.join(BENCHMARKS_DIR, 'full')
+        self.assertTrue(os.path.exists(small_dir))
+        self.assertTrue(os.path.exists(full_dir))
+
+    def test_benchmark_graphs_are_valid(self):
+        """Test that all benchmark graphs produce valid colorings."""
+        graphs = load_dimacs_test_graphs('full')
+
+        for name, graph, chromatic in graphs:
+            coloring = graph_coloring(graph)
+            is_valid, conflicts = is_valid_coloring(graph, coloring)
+            self.assertTrue(is_valid,
+                            f"Graph {name} produced invalid coloring with {conflicts} conflicts")
+
+    def test_create_test_graphs_uses_dimacs(self):
+        """Test that create_test_graphs() returns DIMACS graphs when available."""
+        graphs = create_test_graphs()
+        dimacs_graphs = load_dimacs_test_graphs('full')
+
+        # Should return same number of graphs
+        self.assertEqual(len(graphs), len(dimacs_graphs))
+
+        # Names should match
+        graph_names = {name for name, _, _ in graphs}
+        dimacs_names = {name for name, _, _ in dimacs_graphs}
+        self.assertEqual(graph_names, dimacs_names)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,30 @@
+{
+  "run_date": "2026-02-01",
+  "model": "claude-sonnet-4-5-20250929",
+  "method": "OpenEvolve automated evolution",
+  "iterations_completed": 110,
+  "best_iteration": 37,
+  "best_generation": 3,
+  "results": {
+    "combined_score": 0.9883,
+    "optimal_count": 9,
+    "total_tests": 10,
+    "total_colors": 36,
+    "time_score": 1.0
+  },
+  "comparison_to_initial": {
+    "initial_score": 0.8308,
+    "initial_optimal_count": 7,
+    "initial_total_colors": 62,
+    "score_improvement": "+19.0%",
+    "color_reduction": "-42%"
+  },
+  "algorithm": "DSatur with enhanced tie-breaking",
+  "notes": [
+    "Used time penalty with quadratic formula: budget = BASE + COEFF * (n^2 + m)",
+    "Post-optimization phase included but proven to be dead code",
+    "DSatur tie-breaking: saturation > uncolored_degree > total_degree > vertex_id",
+    "Rate limit hit with 3 parallel workers, reduced to 1",
+    "Resumed from checkpoint_10 after initial rate limit issues"
+  ]
+}

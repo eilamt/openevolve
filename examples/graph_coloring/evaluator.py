@@ -10,6 +10,7 @@ and returns metrics including:
 """
 
 import importlib.util
+import json
 import sys
 import os
 import random
@@ -37,6 +38,12 @@ import time
 BASE_TIME_BUDGET = 0.001  # 1ms base budget
 COEFF_TIME = 8.8e-7  # ~880 nanoseconds per (n² + m) unit
 TIME_PENALTY_WEIGHT = 0.3  # 30% of score comes from time efficiency
+
+# ============================================================
+# DIMACS Benchmark Configuration
+# ============================================================
+BENCHMARKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "benchmarks")
+CHROMATIC_NUMBERS_FILE = os.path.join(BENCHMARKS_DIR, "chromatic_numbers.json")
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -115,6 +122,127 @@ def create_random_graph(num_vertices: int, edge_probability: float, seed: int = 
             if random.random() < edge_probability:
                 g.add_edge(i, j)
     return g
+
+
+def load_dimacs_graph(file_path: str):
+    """
+    Load a graph from a DIMACS .col format file.
+
+    DIMACS format:
+        c <comment lines>
+        p edge <num_vertices> <num_edges>
+        e <v1> <w1>
+        e <v2> <w2>
+        ...
+
+    Note: DIMACS uses 1-indexed vertices, this function converts to 0-indexed.
+
+    Args:
+        file_path: Path to the .col file
+
+    Returns:
+        Graph object with vertices and edges loaded from file
+
+    Raises:
+        FileNotFoundError: If the file doesn't exist
+        ValueError: If the file format is invalid
+    """
+    from initial_program import Graph
+
+    num_vertices = None
+    edges = []
+
+    with open(file_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+
+            parts = line.split()
+            if not parts:
+                continue
+
+            if parts[0] == 'c':
+                # Comment line - skip
+                continue
+            elif parts[0] == 'p':
+                # Problem line: p edge <num_vertices> <num_edges>
+                if len(parts) >= 4:
+                    num_vertices = int(parts[2])
+                    # num_edges = int(parts[3])  # Not strictly needed
+            elif parts[0] == 'e':
+                # Edge line: e <v1> <v2> (1-indexed)
+                if len(parts) >= 3:
+                    v1 = int(parts[1]) - 1  # Convert to 0-indexed
+                    v2 = int(parts[2]) - 1
+                    edges.append((v1, v2))
+
+    if num_vertices is None:
+        raise ValueError(f"Invalid DIMACS file: no problem line found in {file_path}")
+
+    g = Graph(num_vertices)
+    for v1, v2 in edges:
+        g.add_edge(v1, v2)
+
+    return g
+
+
+def load_chromatic_registry():
+    """
+    Load the chromatic numbers registry from JSON file.
+
+    Returns:
+        dict: Registry with chromatic numbers for known DIMACS graphs,
+              or empty dict if file doesn't exist
+    """
+    if os.path.exists(CHROMATIC_NUMBERS_FILE):
+        with open(CHROMATIC_NUMBERS_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+
+def load_dimacs_test_graphs(category: str = "full"):
+    """
+    Load test graphs from DIMACS benchmark files.
+
+    Scans the benchmarks/{category}/ directory for .col files and loads them
+    along with their known chromatic numbers from the registry.
+
+    Args:
+        category: Either "small" (for quick Stage 2) or "full" (for Stage 3)
+
+    Returns:
+        list: List of (name, graph, chromatic_number_or_None) tuples
+              Returns empty list if no benchmark files found
+    """
+    benchmark_dir = os.path.join(BENCHMARKS_DIR, category)
+    if not os.path.exists(benchmark_dir):
+        return []
+
+    # Load chromatic number registry
+    registry = load_chromatic_registry()
+    category_registry = registry.get(category, {})
+
+    test_graphs = []
+    col_files = sorted([f for f in os.listdir(benchmark_dir) if f.endswith('.col')])
+
+    for filename in col_files:
+        file_path = os.path.join(benchmark_dir, filename)
+        try:
+            graph = load_dimacs_graph(file_path)
+
+            # Get chromatic number from registry if available
+            chromatic_info = category_registry.get(filename, {})
+            chromatic_number = chromatic_info.get("chromatic", None)
+
+            # Use filename without extension as name
+            name = os.path.splitext(filename)[0]
+            test_graphs.append((name, graph, chromatic_number))
+        except Exception as e:
+            print(f"Warning: Failed to load {filename}: {e}")
+            continue
+
+    return test_graphs
 
 
 def create_crown_graph(n: int, adversarial_ordering: bool = True):
@@ -347,12 +475,18 @@ def create_test_graphs():
     """
     Create a suite of test graphs for evaluation.
 
-    Includes adversarial graphs designed to expose weaknesses in
-    greedy algorithms like DSatur.
+    First attempts to load DIMACS benchmark graphs from the benchmarks/full/
+    directory. If no benchmarks are found, falls back to built-in test graphs.
 
     Returns:
         list: List of (name, graph, known_chromatic_number_or_bound) tuples
     """
+    # First, try to load DIMACS benchmarks
+    dimacs_graphs = load_dimacs_test_graphs("full")
+    if dimacs_graphs:
+        return dimacs_graphs
+
+    # Fallback: use built-in test graphs
     from initial_program import Graph
 
     test_graphs = []
@@ -638,8 +772,11 @@ def evaluate_stage2(program_path: str) -> dict:
     """
     Stage 2: Quick scoring on small graphs.
 
-    Only runs if stage 1 passed. Computes quality scores on 3 small graphs
+    Only runs if stage 1 passed. Computes quality scores on small graphs
     to filter out algorithms that produce valid but inefficient colorings.
+
+    Uses DIMACS small benchmarks if available, otherwise falls back to
+    built-in test graphs.
 
     Args:
         program_path: Path to the evolved program file
@@ -657,28 +794,30 @@ def evaluate_stage2(program_path: str) -> dict:
         count_colors = module.count_colors
         Graph = module.Graph
 
-        # Same test graphs as stage 1, but now with expected chromatic numbers
-        quick_tests = []
+        # Try to load DIMACS small benchmarks first
+        quick_tests = load_dimacs_test_graphs("small")
 
-        # 1. Triangle (K3) - chromatic number = 3
-        triangle = Graph(3)
-        triangle.add_edge(0, 1)
-        triangle.add_edge(1, 2)
-        triangle.add_edge(0, 2)
-        quick_tests.append(("Triangle", triangle, 3))
+        if not quick_tests:
+            # Fallback: use built-in test graphs
+            # 1. Triangle (K3) - chromatic number = 3
+            triangle = Graph(3)
+            triangle.add_edge(0, 1)
+            triangle.add_edge(1, 2)
+            triangle.add_edge(0, 2)
+            quick_tests.append(("Triangle", triangle, 3))
 
-        # 2. Complete graph K4 - chromatic number = 4
-        k4 = Graph(4)
-        for i in range(4):
-            for j in range(i + 1, 4):
-                k4.add_edge(i, j)
-        quick_tests.append(("K4", k4, 4))
+            # 2. Complete graph K4 - chromatic number = 4
+            k4 = Graph(4)
+            for i in range(4):
+                for j in range(i + 1, 4):
+                    k4.add_edge(i, j)
+            quick_tests.append(("K4", k4, 4))
 
-        # 3. Simple path (3 vertices) - chromatic number = 2
-        path = Graph(3)
-        path.add_edge(0, 1)
-        path.add_edge(1, 2)
-        quick_tests.append(("Path3", path, 2))
+            # 3. Simple path (3 vertices) - chromatic number = 2
+            path = Graph(3)
+            path.add_edge(0, 1)
+            path.add_edge(1, 2)
+            quick_tests.append(("Path3", path, 2))
 
         # Compute scores
         total_score = 0
@@ -693,7 +832,14 @@ def evaluate_stage2(program_path: str) -> dict:
                 all_valid = False
                 graph_score = 0
             else:
-                graph_score = min(1.0, expected_chromatic / num_colors)
+                # Handle unknown chromatic numbers
+                if expected_chromatic is not None:
+                    graph_score = min(1.0, expected_chromatic / num_colors)
+                else:
+                    # Estimate lower bound as max_degree / 2
+                    max_degree = max(graph.get_degree(v) for v in range(graph.num_vertices))
+                    estimated_lower = max(2, max_degree // 2)
+                    graph_score = min(1.0, estimated_lower / num_colors)
 
             total_score += graph_score
 
