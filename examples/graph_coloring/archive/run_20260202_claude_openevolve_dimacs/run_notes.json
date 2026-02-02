@@ -1,0 +1,64 @@
+{
+  "run_date": "2026-02-02",
+  "model": "claude-sonnet-4-5-20250929",
+  "method": "OpenEvolve automated evolution",
+  "benchmark": "DIMACS full benchmark (22 graphs)",
+  "iterations_completed": 50,
+  "best_iteration": 41,
+  "best_generation": 3,
+  "initial_program": {
+    "algorithm": "DSatur with enhanced tie-breaking",
+    "description": "NOT simple greedy - started from DSatur with multi-level tie-breaking (saturation > uncolored_degree > total_degree > vertex_id)",
+    "initial_score": 0.9228,
+    "initial_colors": 363,
+    "initial_optimal_count": 15
+  },
+  "results": {
+    "combined_score": 0.9363,
+    "optimal_count": 15,
+    "total_tests": 22,
+    "total_colors": 362,
+    "total_time_ms": 0.74,
+    "avg_color_score": 0.9363,
+    "avg_time_score": 0.9833
+  },
+  "comparison_to_initial": {
+    "score_improvement": "+1.4%",
+    "color_reduction": "-1 (363 -> 362)",
+    "time_improvement": "-43% (1.32ms -> 0.74ms)",
+    "optimal_count_change": "0 (stayed at 15/22)"
+  },
+  "evolved_algorithm": {
+    "description": "DSatur with first-vertex selection, explicit if-chain tie-breaking, and post-processing",
+    "changes_from_initial": [
+      "Starts with highest-degree vertex explicitly",
+      "Uses explicit if-chain instead of tuple comparison for tie-breaking",
+      "Includes post-processing that tries to compact top 2 colors"
+    ]
+  },
+  "key_findings": [
+    "Post-processing is DEAD CODE - 0 recolorings across all 22 graphs",
+    "Actual improvement came from starting with highest-degree vertex",
+    "Only queen12_12 benefited from different vertex ordering (18->17 colors)",
+    "62 vertices colored differently between base and evolved on queen12_12",
+    "Most score improvement was from SPEED gains (staying within time budgets)",
+    "Graphs that improved scores: queen11_11, queen12_12, queen13_13, le450_15c (all from time, not colors)"
+  ],
+  "configuration": {
+    "max_iterations": 50,
+    "checkpoint_interval": 5,
+    "temperature": 0.7,
+    "max_tokens": 8192,
+    "population_size": 50,
+    "num_islands": 3,
+    "exploitation_ratio": 0.7,
+    "diff_based_evolution": true
+  },
+  "notes": [
+    "This run used DIMACS benchmarks (22 graphs) instead of 10 hand-crafted graphs from earlier runs",
+    "Initial program was DSatur (not simple greedy) - a strong starting point",
+    "Evolution found minor improvements but no fundamentally new algorithm",
+    "The post-processing code should be removed as it does nothing",
+    "Consider trying with simple greedy as initial to give more room for discovery"
+  ]
+}
