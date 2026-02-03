@@ -1,0 +1,49 @@
+{
+  "run_date": "2026-02-03",
+  "run_name": "greedy_to_dsatur",
+  "description": "Evolution from simple greedy to DSatur algorithm",
+  "iterations_completed": 109,
+  "iterations_configured": 100,
+  "model": "claude-sonnet-4-5-20250929",
+  "initial_algorithm": "Simple greedy (natural vertex order)",
+  "evolved_algorithm": "DSatur with 2-level tie-breaking",
+  "results": {
+    "initial_score": 0.8934,
+    "final_score": 0.9384,
+    "improvement": "5.0%",
+    "initial_optimal_count": 10,
+    "final_optimal_count": 15,
+    "initial_total_colors": 389,
+    "final_total_colors": 362,
+    "colors_saved": 27
+  },
+  "evolution_discovery": {
+    "dsatur_found_at_iteration": 2,
+    "iterations_without_improvement": 107
+  },
+  "configuration": {
+    "temperature": 0.9,
+    "max_tokens": 8192,
+    "population_size": 80,
+    "num_islands": 3,
+    "exploitation_ratio": 0.3,
+    "exploration_ratio": 0.7
+  },
+  "notes": [
+    "Started from simple greedy algorithm (natural vertex order)",
+    "OpenEvolve independently discovered DSatur at iteration 2",
+    "DSatur tie-breaking: saturation_degree > vertex_degree",
+    "Simpler than manually-written DSatur but same performance",
+    "No improvement found after 107 more iterations",
+    "Rate limit errors (429) occurred but handled by retry logic",
+    "Run exceeded configured 100 iterations (stopped at 109)",
+    "Prompt defined in config.yaml under prompt.system_message"
+  ],
+  "files_archived": [
+    "best_program.py - Evolved DSatur algorithm",
+    "best_program_info.json - Metrics and metadata",
+    "initial_program.py - Starting greedy algorithm",
+    "evaluator.py - 3-stage cascade evaluation",
+    "config.yaml - Full configuration including LLM prompt"
+  ]
+}
