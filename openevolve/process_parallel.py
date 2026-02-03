@@ -470,6 +470,7 @@ class ProcessParallelController:
         # Track pending futures by island to maintain distribution
         pending_futures: Dict[int, Future] = {}
         island_pending: Dict[int, List[int]] = {i: [] for i in range(self.num_islands)}
+        iteration_to_island: Dict[int, int] = {}  # Track target island for each iteration
         batch_size = min(self.num_workers * 2, max_iterations)
 
         # Submit initial batch - distribute across islands
@@ -484,6 +485,7 @@ class ProcessParallelController:
                     if future:
                         pending_futures[current_iteration] = future
                         island_pending[island_id].append(current_iteration)
+                        iteration_to_island[current_iteration] = island_id
                     current_iteration += 1
 
         next_iteration = current_iteration
@@ -539,9 +541,15 @@ class ProcessParallelController:
                     # Reconstruct program from dict
                     child_program = Program(**result.child_program_dict)
 
-                    # Add to database (will auto-inherit parent's island)
-                    # No need to specify target_island - database will handle parent island inheritance
-                    self.database.add(child_program, iteration=completed_iteration)
+                    # Add to database with explicit target island to ensure proper distribution
+                    # This fixes the bug where empty islands never get populated because
+                    # children would inherit the parent's island (from fallback sampling)
+                    target_island = iteration_to_island.get(completed_iteration)
+                    self.database.add(
+                        child_program,
+                        iteration=completed_iteration,
+                        target_island=target_island
+                    )
 
                     # Store artifacts
                     if result.artifacts:
@@ -739,6 +747,8 @@ class ProcessParallelController:
                 if completed_iteration in iteration_list:
                     iteration_list.remove(completed_iteration)
                     break
+            # Clean up iteration_to_island mapping
+            iteration_to_island.pop(completed_iteration, None)
 
             # Submit next iterations maintaining island balance
             for island_id in range(self.num_islands):
@@ -751,6 +761,7 @@ class ProcessParallelController:
                     if future:
                         pending_futures[next_iteration] = future
                         island_pending[island_id].append(next_iteration)
+                        iteration_to_island[next_iteration] = island_id
                         next_iteration += 1
                         break  # Only submit one iteration per completion to maintain balance
 
