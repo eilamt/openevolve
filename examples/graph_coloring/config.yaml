@@ -2,18 +2,18 @@
 max_iterations: 100
 checkpoint_interval: 5
 
-# LLM configuration - Claude only (uncomment Gemini when billing is enabled)
+# LLM configuration - Gemini (free tier available)
 llm:
   models:
-    - name: "claude-sonnet-4-5-20250929"
+    # Uncomment Claude if you have an Anthropic API key:
+    # - name: "claude-sonnet-4-5-20250929"
+    #   weight: 0.5
+    #   api_base: "https://api.anthropic.com/v1"
+    #   api_key: "${ANTHROPIC_API_KEY}"
+    - name: "gemini-2.0-flash"
       weight: 1.0
-      api_base: "https://api.anthropic.com/v1"
-      api_key: "${ANTHROPIC_API_KEY}"
-    # Uncomment below when Gemini billing is enabled:
-    # - name: "gemini-2.0-flash"
-    #   weight: 0.2
-    #   api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
-    #   api_key: "${GEMINI_API_KEY}"
+      api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
+      api_key: "${GEMINI_API_KEY}"
   temperature: 0.9
   max_tokens: 8192
   timeout: 300
@@ -21,21 +21,17 @@ llm:
 # Prompt configuration
 prompt:
   system_message: |
-    You are an expert programmer specializing in graph algorithms and combinatorial optimization.
+    You are an expert programmer specializing in graph algorithms.
 
-    Your task is to improve a graph coloring algorithm that assigns colors to vertices such that
-    no two adjacent vertices share the same color, using the minimum number of colors possible.
+    Your task is to improve a graph coloring algorithm. Graph coloring assigns colors
+    to vertices such that no two adjacent vertices share the same color.
 
-    The graph coloring problem is NP-hard, but many effective heuristics exist:
-    - Greedy coloring with different vertex orderings (e.g., largest degree first)
-    - DSatur: prioritize vertices with highest "saturation degree" (most different neighbor colors)
-    - Recursive Largest First (RLF): build independent sets one at a time
-    - Local search: swap colors to reduce the total count
+    The goal is to minimize the number of colors used while ensuring validity.
 
     Focus on improving the graph_coloring function to:
     1. Always produce valid colorings (no adjacent vertices with same color)
     2. Use as few colors as possible
-    3. Work efficiently on graphs of various sizes and densities
+    3. Work efficiently on graphs of various sizes
 
 # Database configuration
 database:
@@ -43,7 +39,7 @@ database:
   archive_size: 20
   num_islands: 3
   elite_selection_ratio: 0.2
-  exploitation_ratio: 0.3
+  exploitation_ratio: 0.2  # Favor exploration (80% explore, 20% exploit)
   similarity_threshold: 0.99
 
 # Evaluator configuration

@@ -238,20 +238,16 @@ def print_adjacency_matrix(graph):
 
 def load_graph_from_file(file_path):
     """
-    Load a graph from a text file.
+    Load a graph from a text file. Supports both simple format and DIMACS .col format.
 
-    File format:
+    Simple format:
         Line 1: Number of vertices (integer)
-        Remaining lines: Edges as "u v" pairs (space-separated integers)
+        Remaining lines: Edges as "u v" pairs (space-separated integers, 0-indexed)
 
-    Example file contents:
-        5
-        0 1
-        0 2
-        1 2
-        1 3
-        2 4
-        3 4
+    DIMACS .col format:
+        c <comment lines>
+        p edge <num_vertices> <num_edges>
+        e <u> <v>  (1-indexed vertices)
 
     Args:
         file_path: Path to the graph file
@@ -262,23 +258,50 @@ def load_graph_from_file(file_path):
     with open(file_path, 'r') as f:
         lines = f.readlines()
 
-    # Skip comment lines and empty lines to find the number of vertices
-    data_lines = []
+    graph = None
+    is_dimacs = False
+
     for line in lines:
-        stripped = line.strip()
-        if stripped and not stripped.startswith('#'):
-            data_lines.append(stripped)
+        line = line.strip()
+        if not line:
+            continue
 
-    # First data line is number of vertices
-    num_vertices = int(data_lines[0])
-    graph = Graph(num_vertices)
+        # DIMACS format: comment lines start with 'c'
+        if line.startswith('c'):
+            is_dimacs = True
+            continue
 
-    # Remaining data lines are edges
-    for line in data_lines[1:]:
-        parts = line.split()
-        if len(parts) >= 2:
-            u, v = int(parts[0]), int(parts[1])
+        # DIMACS format: problem line "p edge <vertices> <edges>"
+        if line.startswith('p'):
+            is_dimacs = True
+            parts = line.split()
+            num_vertices = int(parts[2])
+            graph = Graph(num_vertices)
+            continue
+
+        # DIMACS format: edge line "e <u> <v>" (1-indexed)
+        if line.startswith('e'):
+            parts = line.split()
+            u, v = int(parts[1]) - 1, int(parts[2]) - 1  # Convert to 0-indexed
             graph.add_edge(u, v)
+            continue
+
+        # Simple format: first non-comment line is vertex count
+        if graph is None and not is_dimacs:
+            # Check if line starts with '#' (simple format comment)
+            if line.startswith('#'):
+                continue
+            # First data line should be vertex count
+            num_vertices = int(line)
+            graph = Graph(num_vertices)
+            continue
+
+        # Simple format: edge lines "u v" (0-indexed)
+        if graph is not None and not is_dimacs:
+            parts = line.split()
+            if len(parts) >= 2:
+                u, v = int(parts[0]), int(parts[1])
+                graph.add_edge(u, v)
 
     return graph
 
